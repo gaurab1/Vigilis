@@ -2,8 +2,11 @@ import threading
 import queue
 import numpy as np
 import whisper
-from src.constants import WHISPER_MODEL
 import time
+
+# Model constants and configuration
+WHISPER_MODEL = "tiny.en"
+WHISPER_SAMPLERATE = 16000
 
 class Transcriber:
     def __init__(self, transcription_ready):

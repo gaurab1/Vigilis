@@ -2,10 +2,10 @@ import sounddevice as sd
 import numpy as np
 import wave
 from datetime import datetime
-from src.constants import WHISPER_SAMPLERATE
+from src.transcriber import WHISPER_SAMPLERATE, Transcriber
 
 class AudioRecorder:
-    def __init__(self, transcriber):
+    def __init__(self, transcriber: Transcriber):
         self.transcriber = transcriber
         self.is_recording = False
         self.samplerate = WHISPER_SAMPLERATE
@@ -63,6 +63,7 @@ class AudioRecorder:
             if status:
                 print(f"Mic Status: {status}")
             self.mic_frames.append(indata.copy())
+
             # Queue audio data for transcription
             self.transcriber.queue_audio(indata)
 
