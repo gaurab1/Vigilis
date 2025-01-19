@@ -25,7 +25,6 @@ python main.py
 1. Select an input device from the dropdown menu.
 2. Click "Start Recording" to begin recording
 3. Click "Stop Recording" to stop and save the recording
-4. Choose a location to save your recording when prompted
 
 ## Note
 Make sure you have the necessary permissions and consent before recording any conversations.
