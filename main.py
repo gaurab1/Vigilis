@@ -2,27 +2,31 @@ import sys
 import sounddevice as sd
 import numpy as np
 import wave
+import whisper
+import time
+import queue
+import threading
 from datetime import datetime
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QPushButton, 
                             QVBoxLayout, QWidget, QLabel, QFileDialog, 
-                            QComboBox, QHBoxLayout, QGroupBox)
-from PyQt6.QtCore import Qt, QTimer
+                            QComboBox, QHBoxLayout, QGroupBox, QTextEdit)
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject
+
+WHISPER_MODEL = "tiny.en"
+WHISPER_SAMPLERATE = 16000
+
+class TranscriptionSignals(QObject):
+    transcription_ready = pyqtSignal(str)
 
 class AudioRecorderApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Call Recorder")
-        self.setGeometry(100, 100, 500, 400)
+        self.setGeometry(100, 100, 800, 600)
         
         # Check for available audio devices
         try:
             devices = sd.query_devices()
-            print("\nAvailable Audio Devices:")
-            for idx, device in enumerate(devices):
-                print(f"\nDevice {idx}: {device['name']}")
-                print(f"  Input channels: {device['max_input_channels']}")
-                print(f"  Output channels: {device['max_output_channels']}")
-                print(f"  Default samplerate: {device['default_samplerate']}")
             
             # Get microphone and stereo mix devices
             self.mic_devices = []
@@ -47,29 +51,33 @@ class AudioRecorderApp(QMainWindow):
             # Use first microphone device as default
             self.current_mic = self.mic_devices[0]
             self.current_mix = self.stereo_mix_devices[0] if self.stereo_mix_devices else None
-            
-            print(f"\nDefault microphone: {self.current_mic['name']}")
-            if self.current_mix:
-                print(f"Stereo Mix device: {self.current_mix['name']}")
-            else:
-                print("No Stereo Mix device found - system audio won't be recorded")
-            
+            self.samplerate = WHISPER_SAMPLERATE
         except Exception as e:
             self.current_mic = None
             self.current_mix = None
-            print(f"Audio device error: {e}")
         
         # Recording settings
         self.is_recording = False
         self.mic_frames = []
         self.mix_frames = []
         
+        # Initialize Whisper model (using small model for better accuracy)
+        self.model = whisper.load_model(WHISPER_MODEL)
+        self.audio_queue = queue.Queue()
+        self.transcription_buffer = []
+        self.signals = TranscriptionSignals()
+        self.signals.transcription_ready.connect(self.update_transcript)
+        
+        # Start transcription thread
+        self.should_stop = False
+        self.transcription_thread = threading.Thread(target=self.transcription_worker, daemon=True)
+        self.transcription_thread.start()
+        
         # Create central widget and layout
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         layout = QVBoxLayout(central_widget)
-        
-        # Add device selection
+
         # Microphone selection
         mic_group = QGroupBox("Select Microphone")
         mic_layout = QVBoxLayout()
@@ -86,9 +94,15 @@ class AudioRecorderApp(QMainWindow):
         self.record_button = QPushButton("Start Recording")
         self.record_button.clicked.connect(self.toggle_recording)
         
+        # Add transcription text area
+        self.transcript_area = QTextEdit()
+        self.transcript_area.setReadOnly(True)
+        self.transcript_area.setPlaceholderText("Transcription will appear here...")
+        
         # Add widgets to layout
         layout.addWidget(self.status_label)
         layout.addWidget(self.record_button)
+        layout.addWidget(self.transcript_area)
         
         # Timer for updating recording duration
         self.timer = QTimer()
@@ -97,7 +111,6 @@ class AudioRecorderApp(QMainWindow):
         
     def update_mic(self, index):
         self.current_mic = self.mic_devices[index]
-        print(f"\nSelected microphone: {self.current_mic['name']}")
     
     def toggle_recording(self):
         if not self.is_recording:
@@ -113,6 +126,7 @@ class AudioRecorderApp(QMainWindow):
         self.is_recording = True
         self.mic_frames = []
         self.mix_frames = []
+        self.transcript_area.clear()
         self.record_button.setText("Stop Recording")
         self.recording_start_time = datetime.now()
         self.timer.start(1000)  # Update every second
@@ -121,24 +135,23 @@ class AudioRecorderApp(QMainWindow):
             if status:
                 print(f"Mic Status: {status}")
             self.mic_frames.append(indata.copy())
+            # Queue audio data for transcription
+            self.process_audio_for_transcription(indata)
 
         def mix_callback(indata, frames, time, status):
             if status:
                 print(f"Mix Status: {status}")
             self.mix_frames.append(indata.copy())
         
-        try:
-            print("\nStarting recording with devices:")
-            print(f"Microphone: {self.current_mic['name']} (ID: {self.current_mic['id']})")
-            if self.current_mix:
-                print(f"Stereo Mix: {self.current_mix['name']} (ID: {self.current_mix['id']})")
-            
-            # Start microphone input stream
+        try:            
+            # Start microphone input stream with larger buffer
             self.mic_stream = sd.InputStream(
                 device=self.current_mic['id'],
                 channels=1,  # Mono recording
-                samplerate=int(self.current_mic['samplerate']),
-                callback=mic_callback
+                samplerate=self.samplerate,  # Whisper expects 16kHz
+                callback=mic_callback,
+                blocksize=1024,  # Smaller block size
+                latency='high'   # Use high latency for stability
             )
             
             # Start stereo mix stream if available
@@ -146,8 +159,8 @@ class AudioRecorderApp(QMainWindow):
                 self.mix_stream = sd.InputStream(
                     device=self.current_mix['id'],
                     channels=1,  # Mono recording
-                    samplerate=int(self.current_mix['samplerate']),
-                    callback=mix_callback
+                    samplerate=self.current_mic['samplerate'],
+                    callback=mix_callback,
                 )
             
             self.mic_stream.start()
@@ -157,7 +170,6 @@ class AudioRecorderApp(QMainWindow):
             self.status_label.setText("Recording...")
         except Exception as e:
             self.status_label.setText(f"Error starting recording: {str(e)}")
-            print(f"\nError details: {e}")
             self.is_recording = False
             self.record_button.setText("Start Recording")
             self.timer.stop()
@@ -180,34 +192,25 @@ class AudioRecorderApp(QMainWindow):
             
             # Save recordings
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            
-            # Save microphone audio
             self.save_audio(self.mic_frames, f"audios/mic_recording_{timestamp}.wav")
-            
-            # If we have system audio, save combined
             if self.mix_frames:
-                self.save_combined_audio(self.mic_frames, self.mix_frames, f"audios/combined_recording_{timestamp}.wav")
+                self.save_audio(self.mix_frames, f"audios/output_{timestamp}.wav", samplerate=self.current_mic['samplerate'])
             
             self.status_label.setText("Recording saved!")
         except Exception as e:
             self.status_label.setText(f"Error saving recording: {str(e)}")
     
-    def save_audio(self, frames, filename):
+    def save_audio(self, frames, filename, samplerate=WHISPER_SAMPLERATE):
         if not frames:
             return
             
         try:
             audio_data = np.concatenate(frames, axis=0)
             
-            # Normalize to prevent clipping
-            max_val = np.max(np.abs(audio_data))
-            if max_val > 0:
-                audio_data = audio_data / max_val
-            
             with wave.open(filename, 'wb') as wf:
                 wf.setnchannels(1)  # Mono
                 wf.setsampwidth(2)  # 16-bit audio
-                wf.setframerate(int(self.current_mic['samplerate']))
+                wf.setframerate(samplerate)
                 wf.writeframes((audio_data * 32767).astype(np.int16))
         except Exception as e:
             print(f"Error saving {filename}: {str(e)}")
@@ -230,7 +233,7 @@ class AudioRecorderApp(QMainWindow):
             combined_data = mic_data + mix_data
             
             # Normalize to prevent clipping
-            max_val = np.max(np.abs(combined_data))
+            max_val = max(np.max(np.abs(combined_data)), 1e-2)
             if max_val > 0:
                 combined_data = combined_data / max_val
             
@@ -242,6 +245,67 @@ class AudioRecorderApp(QMainWindow):
         except Exception as e:
             print(f"Error saving {filename}: {str(e)}")
     
+    def process_audio_for_transcription(self, audio_data):
+        try:
+            # Just queue the audio data and return quickly
+            self.audio_queue.put(audio_data.copy())
+        except Exception as e:
+            print(f"Error queuing audio: {e}")
+
+    def transcription_worker(self):
+        while not self.should_stop:
+            # Collect audio data for 2 seconds
+            audio_chunks = []
+            timeout_counter = 0
+            
+            # Collect chunks for 2 seconds worth of audio
+            target_samples = int(self.samplerate * 2)  # 2 seconds of audio
+            collected_samples = 0
+            
+            while collected_samples < target_samples and timeout_counter < 20:
+                try:
+                    chunk = self.audio_queue.get(timeout=0.1)
+                    audio_chunks.append(chunk)
+                    collected_samples += len(chunk)
+                except queue.Empty:
+                    timeout_counter += 1
+                    continue
+            
+            if audio_chunks:
+                # Combine chunks and convert to the format Whisper expects
+                audio_data = np.concatenate(audio_chunks)
+                
+                # Convert to mono if necessary
+                if audio_data.ndim > 1:
+                    audio_data = audio_data.mean(axis=1)
+                
+                # Normalize audio to float32 in range [-1, 1]
+                audio_data = audio_data.astype(np.float32)
+                if np.max(np.abs(audio_data)) > 0:
+                    audio_data = audio_data / np.max(np.abs(audio_data))
+                
+                try:
+                    start = time.time()
+                    result = self.model.transcribe(
+                        audio_data,
+                        language='en',
+                        fp16=False
+                    )
+                    if result["text"].strip():
+                        print(f"Transcribed text: {result['text']} in {time.time() - start:.2f} seconds")
+                        self.signals.transcription_ready.emit(result["text"])
+                except Exception as e:
+                    print(f"Transcription failed: {e}")
+    
+    def update_transcript(self, text):
+        cursor = self.transcript_area.textCursor()
+        cursor.movePosition(cursor.MoveOperation.End)
+        cursor.insertText(text + " ")  # Add a space after each segment
+        self.transcript_area.setTextCursor(cursor)
+        self.transcript_area.verticalScrollBar().setValue(
+            self.transcript_area.verticalScrollBar().maximum()
+        )
+
     def update_duration(self):
         if self.recording_start_time:
             duration = datetime.now() - self.recording_start_time
