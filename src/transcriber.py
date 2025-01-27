@@ -3,36 +3,34 @@ import queue
 import numpy as np
 import whisper
 import time
+from scipy import signal
 
 # Model constants and configuration
 WHISPER_MODEL = "tiny.en"
 WHISPER_SAMPLERATE = 16000
 
 class Transcriber:
-    def __init__(self, transcription_ready):
+    def __init__(self, transcription_ready, input_samplerate=None):
         self.model = whisper.load_model(WHISPER_MODEL)
         self.audio_queue = queue.Queue()
         self.should_stop = False
         self.transcription_ready = transcription_ready
+        self.input_samplerate = input_samplerate or WHISPER_SAMPLERATE
         
         # Start transcription thread
         self.transcription_thread = threading.Thread(target=self.transcription_worker, daemon=True)
         self.transcription_thread.start()
     
     def queue_audio(self, audio_data):
-        try:
-            self.audio_queue.put(audio_data.copy())
-        except Exception as e:
-            print(f"Error queuing audio: {e}")
+        self.audio_queue.put(audio_data.copy())
     
     def transcription_worker(self):
         while not self.should_stop:
-            # Collect audio data for 2 seconds
             audio_chunks = []
             timeout_counter = 0
             
             # Collect chunks for 2 seconds worth of audio
-            target_samples = int(16000 * 2)  # 2 seconds of audio at 16kHz
+            target_samples = int(self.input_samplerate * 2)
             collected_samples = 0
             
             while collected_samples < target_samples and timeout_counter < 20:
@@ -45,19 +43,20 @@ class Transcriber:
                     continue
             
             if audio_chunks:
-                # Combine chunks and convert to the format Whisper expects
                 audio_data = np.concatenate(audio_chunks)
                 
-                # Convert to mono if necessary
-                if audio_data.ndim > 1:
-                    audio_data = audio_data.mean(axis=1)
+                # Resample if needed
+                if self.input_samplerate != WHISPER_SAMPLERATE:
+                    samples = len(audio_data)
+                    new_samples = int(samples * WHISPER_SAMPLERATE / self.input_samplerate)
+                    audio_data = signal.resample(audio_data, new_samples)
                 
-                # Normalize audio to float32 in range [-1, 1]
                 audio_data = audio_data.astype(np.float32)
-                if np.max(np.abs(audio_data)) > 0:
-                    audio_data = audio_data / np.max(np.abs(audio_data))
+                max_amplitude = np.max(np.abs(audio_data))
                 
-                try:
+                if max_amplitude > 0.01:
+                    audio_data = audio_data / max_amplitude
+                    
                     start = time.time()
                     result = self.model.transcribe(
                         audio_data,
@@ -67,8 +66,6 @@ class Transcriber:
                     if result["text"].strip():
                         print(f"Transcribed text: {result['text']} in {time.time() - start:.2f} seconds")
                         self.transcription_ready.emit(result["text"])
-                except Exception as e:
-                    print(f"Transcription failed: {e}")
     
     def stop(self):
         self.should_stop = True

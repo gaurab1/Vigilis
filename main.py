@@ -1,22 +1,26 @@
 import sys
 import os
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtGui import QIcon
 
 from src.frontend import TranscriptionSignals, MainWindow
 from src.audio_recorder import AudioRecorder
-from src.transcriber import Transcriber
+from src.transcriber import Transcriber, WHISPER_SAMPLERATE
 
 def main():
     app = QApplication(sys.argv)
-    
-    # Set application icon
-    icon_path = os.path.join(os.path.dirname(__file__), 'assets', 'download.png')
-    if os.path.exists(icon_path):
-        app.setWindowIcon(QIcon(icon_path))
-    
     signals = TranscriptionSignals()
-    window = MainWindow(AudioRecorder(Transcriber(signals.transcription_ready)), signals)
+    
+    # Create audio recorder first to detect devices
+    recorder = AudioRecorder(None, None)
+    
+    mic_transcriber = Transcriber(signals.mic_transcription_ready)
+    mix_transcriber = Transcriber(signals.mix_transcription_ready, 
+                                input_samplerate=recorder.current_mix['samplerate'] if recorder.current_mix else None)
+
+    recorder.input_transcriber = mic_transcriber
+    recorder.mix_transcriber = mix_transcriber
+    
+    window = MainWindow(recorder, signals)
     window.show()
     sys.exit(app.exec())
 

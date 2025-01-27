@@ -1,12 +1,14 @@
 import sounddevice as sd
 import numpy as np
 import wave
+import os
 from datetime import datetime
 from src.transcriber import WHISPER_SAMPLERATE, Transcriber
 
 class AudioRecorder:
-    def __init__(self, transcriber: Transcriber):
-        self.transcriber = transcriber
+    def __init__(self, input_transcriber: Transcriber, mix_transcriber: Transcriber):
+        self.input_transcriber = input_transcriber
+        self.mix_transcriber = mix_transcriber
         self.is_recording = False
         self.samplerate = WHISPER_SAMPLERATE
         self.mic_frames = []
@@ -63,67 +65,69 @@ class AudioRecorder:
             if status:
                 print(f"Mic Status: {status}")
             self.mic_frames.append(indata.copy())
-
-            # Queue audio data for transcription
-            self.transcriber.queue_audio(indata)
+            self.input_transcriber.queue_audio(indata)
 
         def mix_callback(indata, frames, time, status):
             if status:
                 print(f"Mix Status: {status}")
             self.mix_frames.append(indata.copy())
+            self.mix_transcriber.queue_audio(indata)
+                   
+        # Start microphone input stream
+        self.mic_stream = sd.InputStream(
+            device=self.current_mic['id'],
+            channels=1,  # Mono recording
+            samplerate=self.samplerate,
+            callback=mic_callback,
+            blocksize=1024,
+            latency='low'
+        )
         
-        try:            
-            # Start microphone input stream with larger buffer
-            self.mic_stream = sd.InputStream(
-                device=self.current_mic['id'],
+        # Start stereo mix stream if available
+        if self.current_mix:
+            mix_blocksize = int(1024 * (self.current_mix['samplerate'] / WHISPER_SAMPLERATE))
+            self.mix_stream = sd.InputStream(
+                device=self.current_mix['id'],
                 channels=1,  # Mono recording
-                samplerate=self.samplerate,  # Whisper expects 16kHz
-                callback=mic_callback,
-                blocksize=1024,  # Smaller block size
-                latency='high'   # Use high latency for stability
+                samplerate=self.current_mix['samplerate'],
+                callback=mix_callback,
+                blocksize=mix_blocksize,
+                latency='low'
             )
-            
-            # Start stereo mix stream if available
-            if self.current_mix:
-                self.mix_stream = sd.InputStream(
-                    device=self.current_mix['id'],
-                    channels=1,  # Mono recording
-                    samplerate=self.current_mic['samplerate'],
-                    callback=mix_callback,
-                )
-            
-            self.mic_stream.start()
-            if self.current_mix:
-                self.mix_stream.start()
-            
-        except Exception as e:
-            self.is_recording = False
-            raise RuntimeError(f"Error starting recording: {str(e)}")
+        
+        self.mic_stream.start()
+        if self.current_mix:
+            self.mix_stream.start()
     
-    def stop_recording(self):
+    def stop_recording(self, transcript_text=None):
         if not self.is_recording:
             return
             
         self.is_recording = False
         
-        try:
-            self.mic_stream.stop()
-            if hasattr(self, 'mix_stream'):
-                self.mix_stream.stop()
-            self.mic_stream.close()
-            if hasattr(self, 'mix_stream'):
-                self.mix_stream.close()
-            
-            # Save recordings
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            self.save_audio(self.mic_frames, f"audios/mic_recording_{timestamp}.wav")
-            if self.mix_frames:
-                self.save_audio(self.mix_frames, f"audios/output_{timestamp}.wav", 
-                              samplerate=self.current_mic['samplerate'])
-            
-            return "Recording saved!"
-        except Exception as e:
-            raise RuntimeError(f"Error saving recording: {str(e)}")
+        self.mic_stream.stop()
+        self.mic_stream.close()
+
+        if hasattr(self, 'mix_stream'):
+            self.mix_stream.stop()
+            self.mix_stream.close()
+        
+        # Save recordings
+        timestamp = datetime.now().strftime("%Y-%m-%d@%H:%M")
+        directory = f"outputs/{timestamp}"
+        os.makedirs(directory, exist_ok=True)
+        
+        # Save audio files
+        self.save_audio(self.mic_frames, f"{directory}/mic_recording.wav")
+        if self.mix_frames:
+            self.save_audio(self.mix_frames, f"{directory}/output.wav", 
+                          samplerate=self.current_mix['samplerate'])
+        
+        if transcript_text:
+            with open(f"{directory}/transcript.txt", 'w', encoding='utf-8') as f:
+                f.write(transcript_text)
+        
+        return f"Recording saved to {directory}"
     
     def save_audio(self, frames, filename, samplerate=WHISPER_SAMPLERATE):
         if not frames:
