@@ -6,7 +6,7 @@ import time
 from scipy import signal
 
 # Model constants and configuration
-WHISPER_MODEL = "tiny.en"
+WHISPER_MODEL = "base.en"
 WHISPER_SAMPLERATE = 16000
 
 class Transcriber:
@@ -52,16 +52,18 @@ class Transcriber:
                     audio_data = signal.resample(audio_data, new_samples)
                 
                 audio_data = audio_data.astype(np.float32)
-                max_amplitude = np.max(np.abs(audio_data))
+                audio_data = audio_data.flatten()
+                max_amplitude = np.max(audio_data)
                 
-                if max_amplitude > 0.01:
+                if max_amplitude > 0.1:
                     audio_data = audio_data / max_amplitude
-                    
                     start = time.time()
                     result = self.model.transcribe(
                         audio_data,
                         language='en',
-                        fp16=False
+                        fp16=False,
+                        condition_on_previous_text=False,
+                        without_timestamps=True,
                     )
                     if result["text"].strip():
                         print(f"Transcribed text: {result['text']} in {time.time() - start:.2f} seconds")

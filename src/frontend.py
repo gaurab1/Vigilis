@@ -132,7 +132,6 @@ class MainWindow(QMainWindow):
 
     def stop_recording(self):
         if self.audio_recorder.is_recording:
-            self.audio_recorder.is_recording = False
             transcript = self.transcript_area.toPlainText()
             message = self.audio_recorder.stop_recording(transcript)
             self.status_label.setText(message)

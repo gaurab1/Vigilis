@@ -113,10 +113,10 @@ class AudioRecorder:
             self.mix_stream.close()
         
         # Save recordings
-        timestamp = datetime.now().strftime("%Y-%m-%d@%H:%M")
+        timestamp = datetime.now().strftime("%Y-%m-%d@%H-%M")
         directory = f"outputs/{timestamp}"
         os.makedirs(directory, exist_ok=True)
-        
+
         # Save audio files
         self.save_audio(self.mic_frames, f"{directory}/mic_recording.wav")
         if self.mix_frames:
