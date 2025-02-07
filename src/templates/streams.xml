@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Connect>
+        <Stream url="wss://{{url}}/media">
+            <Parameter name="mode" value="bidirectional" />
+            <Parameter name="track" value="both_tracks" />
+        </Stream>
+    </Connect>
+    <Pause length="40"/>
+</Response>
