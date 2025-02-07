@@ -8,6 +8,7 @@ from scipy import signal
 # Model constants and configuration
 WHISPER_MODEL = "base.en"
 WHISPER_SAMPLERATE = 16000
+TWILIO_SAMPLERATE = 8000
 
 class Transcriber:
     def __init__(self, transcription_ready, input_samplerate=None):
@@ -15,7 +16,7 @@ class Transcriber:
         self.audio_queue = queue.Queue()
         self.should_stop = False
         self.transcription_ready = transcription_ready
-        self.input_samplerate = input_samplerate or WHISPER_SAMPLERATE
+        self.input_samplerate = input_samplerate or TWILIO_SAMPLERATE
         
         # Start transcription thread
         self.transcription_thread = threading.Thread(target=self.transcription_worker, daemon=True)
@@ -55,7 +56,7 @@ class Transcriber:
                 audio_data = audio_data.flatten()
                 max_amplitude = np.max(audio_data)
                 
-                if max_amplitude > 0.1:
+                if max_amplitude > 1000:
                     audio_data = audio_data / max_amplitude
                     start = time.time()
                     result = self.model.transcribe(
