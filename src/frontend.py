@@ -1,13 +1,16 @@
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QLabel, 
                             QPushButton, QComboBox, QHBoxLayout, QGroupBox, 
-                            QTextEdit, QFrame)
+                            QTextEdit, QFrame, QLineEdit)
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject
 from PyQt6.QtGui import QIcon
 from datetime import datetime
 import os
-import audioop
 from src.styles import *
 import json
+from twilio.rest import Client
+
+from dotenv import load_dotenv
+load_dotenv()
 
 class StyleFrame(QFrame):
     def __init__(self):
@@ -46,6 +49,7 @@ class MainWindow(QMainWindow):
 
         self.setup_icon()
         self.setup_header(main_layout)
+        self.setup_call_controls(main_layout)
         self.setup_controls(main_layout)
         self.setup_transcription(main_layout)
         
@@ -79,6 +83,7 @@ class MainWindow(QMainWindow):
             self.timer.start(1000)  # Update every second
         elif status == "stop":
             self.timer.stop()
+            self.stop_recording()
 
     def setup_icon(self):
         icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'assets', 'icon.png')
@@ -95,6 +100,27 @@ class MainWindow(QMainWindow):
         header_label.setStyleSheet(HeaderStyle)
         header_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(header_label)
+
+    def setup_call_controls(self, layout):
+        call_controls = StyleFrame()
+        call_controls_layout = QHBoxLayout()
+        call_controls.setLayout(call_controls_layout)
+        
+        self.phone_input = QLineEdit()
+        self.phone_input.setPlaceholderText("Enter phone number (e.g. +1234567890)")
+        self.phone_input.setMinimumWidth(200)
+        call_controls_layout.addWidget(self.phone_input)
+        
+        self.call_button = QPushButton("Call")
+        self.call_button.clicked.connect(self.make_call)
+        call_controls_layout.addWidget(self.call_button)
+        
+        self.end_call_button = QPushButton("End Call")
+        self.end_call_button.clicked.connect(self.end_call)
+        self.end_call_button.setEnabled(False)
+        call_controls_layout.addWidget(self.end_call_button)
+        
+        layout.addWidget(call_controls)
 
     def setup_controls(self, layout):
         controls_frame = StyleFrame()
@@ -118,12 +144,6 @@ class MainWindow(QMainWindow):
         self.record_button.setStyleSheet("")
         self.record_button.clicked.connect(self.toggle_recording)
         button_layout.addWidget(self.record_button)
-        
-        self.end_call_button = QPushButton("End Call")
-        self.end_call_button.setStyleSheet(RecordingButtonStyle)
-        self.end_call_button.clicked.connect(self.end_call)
-        self.end_call_button.setEnabled(False)  # Disabled by default
-        button_layout.addWidget(self.end_call_button)
         
         layout.addLayout(button_layout)
 
@@ -152,7 +172,7 @@ class MainWindow(QMainWindow):
             self.audio_recorder.start_recording()
             self.recording_start_time = datetime.now()
             self.record_button.setText("Stop Recording")
-            self.record_button.setStyleSheet(RecordingButtonStyle)
+            self.record_button.setStyleSheet("background-color: red")
             self.timer.start(1000)  # Update every second
             self.status_text[2] = "Recording... 00:00"
             self.update_status_label()
@@ -207,6 +227,9 @@ class MainWindow(QMainWindow):
         )
 
     def update_duration(self):
+        """
+        Update the status label with the current duration of the recording
+        """
         if self.recording_start_time:
             duration = datetime.now() - self.recording_start_time
             seconds = duration.total_seconds()
@@ -215,17 +238,31 @@ class MainWindow(QMainWindow):
             self.status_text[2] = f"Recording... {minutes:02d}:{seconds:02d}"
             self.update_status_label()
 
+    def make_call(self):
+        """Initiate an outbound call"""
+        phone_number = self.phone_input.text().strip()
+        if not phone_number:
+            print("Please enter a phone number")
+            return
+            
+        call_sid = make_outbound_call(phone_number)
+        
+        self.audio_recorder.call_sid = call_sid
+        self.end_call_button.setEnabled(True)
+        self.call_button.setEnabled(False)
+
     def end_call(self):
         """End the current call"""
         if self.audio_recorder and self.audio_recorder.ws:
-            try:
-                close_message = {
-                    "event": "stop",
-                    "streamSid": self.audio_recorder.stream_sid
-                }
-                self.audio_recorder.ws.send(json.dumps(close_message))
-            except Exception as e:
-                print(f"Error sending close message: {e}")
+            # Close the WebSocket connection
+            close_message = {
+                "event": "stop",
+                "streamSid": self.audio_recorder.stream_sid
+            }
+            self.audio_recorder.ws.send(json.dumps(close_message))
+
+            # Terminate the call on the server
+            self.audio_recorder.ws.close()
             self.audio_recorder.stop_call()
             self.stop_recording()
             
@@ -234,3 +271,25 @@ class MainWindow(QMainWindow):
                       self.status_text[1],
                       f"<i>{self.status_text[2]}</i>"]
         self.status_label.setText("<br>".join(html_status))
+
+def make_outbound_call(to_number):
+    """Make an outbound call using Twilio API
+    
+    Args:
+        to_number (str): The phone number to call in E.164 format (e.g. +1234567890)
+    
+    Returns:
+        str: The call SID if successful, None if failed
+    """
+    client = Client(os.getenv('TWILIO_ACCOUNT_SID'), os.getenv('TWILIO_AUTH_TOKEN'))
+        
+    # Get the ngrok URL for the TwiML endpoint
+    ngrok_url = os.getenv('NGROK_URL')
+            
+    call = client.calls.create(
+        url=f"{ngrok_url}/twiml",
+        to=to_number,
+        from_=os.getenv('TWILIO_PHONE_NUMBER')
+    )
+    print(f"Started outbound call: {call.sid}")
+    return call.sid

@@ -72,14 +72,10 @@ def media_stream(ws):
                 print("Received stop event")
                 signals.call_status_changed.emit("stop")
                 window.audio_recorder.stop_call()
-                if window:
-                    window.stop_recording()
                 break
         else:
             print("No message received")
             break
-            
-    print("WebSocket closed")
 
 def process_audio_payload(payload):
     """Process base64 encoded mulaw audio data from Twilio"""
