@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QLabel, 
                             QPushButton, QComboBox, QHBoxLayout, QGroupBox, 
-                            QTextEdit, QFrame, QLineEdit)
+                            QTextEdit, QFrame, QLineEdit, QDialog)
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject
 from PyQt6.QtGui import QIcon
 from datetime import datetime
@@ -22,7 +22,37 @@ class TranscriptionSignals(QObject):
     mic_transcription_ready = pyqtSignal(str)
     mix_transcription_ready = pyqtSignal(str)
     call_status_changed = pyqtSignal(str)
+    incoming_call = pyqtSignal(str, str, str)
     
+
+class IncomingCallDialog(QDialog):
+    def __init__(self, caller_number, caller_state, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Incoming Call")
+        self.setFixedSize(400, 200)
+        
+        layout = QVBoxLayout()
+        
+        # Call information
+        info_label = QLabel(f"Incoming call from:\n{caller_number}\nState: {caller_state}")
+        info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(info_label)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        
+        accept_button = QPushButton("Accept")
+        accept_button.setStyleSheet("background-color: green; color: white")
+        accept_button.clicked.connect(self.accept)
+        button_layout.addWidget(accept_button)
+        
+        reject_button = QPushButton("Reject")
+        reject_button.setStyleSheet("background-color: red; color: white")
+        reject_button.clicked.connect(self.reject)
+        button_layout.addWidget(reject_button)
+        
+        layout.addLayout(button_layout)
+        self.setLayout(layout)
 
 class MainWindow(QMainWindow):
     def __init__(self, audio_recorder, signals):
@@ -33,6 +63,7 @@ class MainWindow(QMainWindow):
         self.signals.mic_transcription_ready.connect(self.update_mic_transcript)
         self.signals.mix_transcription_ready.connect(self.update_mix_transcript)
         self.signals.call_status_changed.connect(self.update_call_status)
+        self.signals.incoming_call.connect(self.handle_incoming_call)
         self.last_prefix = None
         self.setup_ui()
         
@@ -58,16 +89,38 @@ class MainWindow(QMainWindow):
         self.timer.timeout.connect(self.update_duration)
         self.recording_start_time = None
     
-    def handle_incoming_call(self, caller_number=None, caller_state=None):
-        """Handle an incoming phone call"""
-        self.status_text[0] = f"Call in progress  - From: {caller_number}"
-        self.status_text[1] = f"State: {caller_state}"
-        self.status_text[2] = "Ready to record"
-        self.update_status_label()
-        self.end_call_button.setEnabled(True)
-        # Disable manual recording during call
-        self.record_button.setEnabled(False)
-    
+    def handle_incoming_call(self, caller_number=None, caller_state=None, call_sid=None):
+        """Handle an incoming phone call by showing a modal dialog"""
+        self.pending_call_sid = call_sid
+        
+        # Show incoming call dialog
+        dialog = IncomingCallDialog(caller_number, caller_state, self)
+        result = dialog.exec()
+        
+        if result == QDialog.DialogCode.Accepted:
+            # Call was accepted
+            self.status_text[0] = f"Call in progress - From: {caller_number}"
+            self.status_text[1] = f"State: {caller_state}"
+            self.status_text[2] = "Ready to record"
+            self.update_status_label()
+            
+            # Update UI state
+            self.call_button.setEnabled(False)
+            self.update_end_call_button(True)
+            
+            # Accept the call
+            client = Client(os.getenv('TWILIO_ACCOUNT_SID'), os.getenv('TWILIO_AUTH_TOKEN'))
+            call = client.calls(self.pending_call_sid).update(
+                url=f"{os.getenv('NGROK_URL')}/accept"
+            )
+        else:
+            # Call was rejected
+            client = Client(os.getenv('TWILIO_ACCOUNT_SID'), os.getenv('TWILIO_AUTH_TOKEN'))
+            call = client.calls(self.pending_call_sid).update(status="completed")
+            
+        # Clear the pending call
+        delattr(self, 'pending_call_sid')
+
     def start_recording_from_call(self):
         """Start recording when a call is connected"""
         if not self.audio_recorder.is_recording:
@@ -81,6 +134,7 @@ class MainWindow(QMainWindow):
     def update_call_status(self, status):
         if status == "start":
             self.timer.start(1000)  # Update every second
+            self.transcript_area.clear()
         elif status == "stop":
             self.timer.stop()
             self.stop_recording()
@@ -117,7 +171,7 @@ class MainWindow(QMainWindow):
         
         self.end_call_button = QPushButton("End Call")
         self.end_call_button.clicked.connect(self.end_call)
-        self.end_call_button.setEnabled(False)
+        self.update_end_call_button(False)
         call_controls_layout.addWidget(self.end_call_button)
         
         layout.addWidget(call_controls)
@@ -158,6 +212,7 @@ class MainWindow(QMainWindow):
         self.transcript_area = QTextEdit()
         self.transcript_area.setReadOnly(True)
         self.transcript_area.setPlaceholderText("Transcription will appear here in real-time...")
+        self.transcript_area.setAcceptRichText(True)
         self.transcript_area.setMinimumHeight(400)  
         self.transcript_area.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse | 
@@ -193,7 +248,7 @@ class MainWindow(QMainWindow):
             self.status_text[1] = ""
             self.status_text[2] = "Ready to record"
             self.update_status_label()
-            self.end_call_button.setEnabled(False)
+            self.update_end_call_button(False)
 
     def update_mic_transcript(self, text):
         if text.strip():
@@ -212,11 +267,11 @@ class MainWindow(QMainWindow):
         
         if current_text:
             if prefix == self.last_prefix:
-                cursor.insertText(f" {content}")
+                cursor.insertHtml(f" {content}")
             else:
-                cursor.insertText(f"\n{prefix}: {content}")
+                cursor.insertHtml(f"<br><b>{prefix}</b>: {content}")
         else:
-            cursor.insertText(f"{prefix}: {content}")
+            cursor.insertHtml(f"<b>{prefix}</b>: {content}")
         
         self.last_prefix = prefix
         
@@ -225,6 +280,15 @@ class MainWindow(QMainWindow):
         self.transcript_area.verticalScrollBar().setValue(
             self.transcript_area.verticalScrollBar().maximum()
         )
+
+    def update_end_call_button(self, enabled):
+        """Update end call button style based on enabled state"""
+        if enabled:
+            self.end_call_button.setEnabled(True)
+            self.end_call_button.setStyleSheet("background-color: red; color: white")
+        else:
+            self.end_call_button.setEnabled(False)
+            self.end_call_button.setStyleSheet("background-color: gray; color: white")
 
     def update_duration(self):
         """
@@ -248,8 +312,9 @@ class MainWindow(QMainWindow):
         call_sid = make_outbound_call(phone_number)
         
         self.audio_recorder.call_sid = call_sid
-        self.end_call_button.setEnabled(True)
+        self.update_end_call_button(True)
         self.call_button.setEnabled(False)
+        self.transcript_area.clear()
 
     def end_call(self):
         """End the current call"""
@@ -265,7 +330,7 @@ class MainWindow(QMainWindow):
             self.audio_recorder.ws.close()
             self.audio_recorder.stop_call()
             self.stop_recording()
-            
+
     def update_status_label(self):
         html_status = [f"<b>{self.status_text[0]}</b>", 
                       self.status_text[1],

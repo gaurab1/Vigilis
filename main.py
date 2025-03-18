@@ -1,11 +1,12 @@
 import sys
 import os
 from PyQt6.QtWidgets import QApplication
-from flask import Flask, render_template, request
+from flask import Flask, render_template, request, send_from_directory
 from flask_sock import Sock
 from src.frontend import TranscriptionSignals, MainWindow
 from src.audio_recorder import AudioRecorder
 from src.transcriber import Transcriber, WHISPER_SAMPLERATE
+from twilio.rest import Client
 
 import threading
 import json
@@ -24,11 +25,27 @@ def start_flask():
 
 @app.route('/twiml', methods=['POST'])
 def return_twiml():
-    print("POST TwiML")
-    print(f"Headers: {dict(request.headers)}")
-    print(f"Data: {request.get_data().decode()}")
+    """Initial TwiML response that plays ringtone and waits for acceptance"""
+    
+    call_sid = request.form.get('CallSid')
+    caller = request.form.get('From', '')
+    caller_state = request.form.get('CallerState', '')
+
+    signals.incoming_call.emit(caller, caller_state, call_sid)
+    
     ngrok_url = request.headers.get('Host')
-    return render_template('streams.xml', url=ngrok_url, caller=request.form.get('From', ''), caller_state=request.form.get('CallerState', ''))
+    return render_template('streams.xml', url=ngrok_url)
+
+@app.route('/accept', methods=['POST'])
+def accept_call():
+    """TwiML response when call is accepted"""
+    caller = request.form.get('From', '')
+    caller_state = request.form.get('CallerState', '')
+    ngrok_url = request.headers.get('Host')
+    return render_template('accept.xml', 
+                         url=ngrok_url,
+                         caller=caller,
+                         caller_state=caller_state)
 
 @app.route('/media', methods=['GET', 'POST'])
 def media_fallback():
@@ -53,7 +70,7 @@ def media_stream(ws):
                 caller_state = data['start']['customParameters']['caller_state']
                 window.audio_recorder.start_call(data['start']['streamSid'], ws)
                 if window:
-                    window.handle_incoming_call(caller_number, caller_state)
+                    # window.handle_incoming_call(caller_number, caller_state)
                     window.start_recording_from_call()
                     signals.call_status_changed.emit("start")
                     

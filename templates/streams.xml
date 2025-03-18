@@ -1,12 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Connect>
-        <Stream url="wss://{{url}}/media">
-            <Parameter name="mode" value="bidirectional" />
-            <Parameter name="track" value="both_tracks" />
-            <Parameter name="caller_number" value="{{caller}}" />
-            <Parameter name="caller_state" value="{{caller_state}}" />
-        </Stream>
-    </Connect>
+    <Gather action="{{url}}/accept" method="POST" timeout="10">
+        <Play loop="0">https://api.twilio.com/cowbell.mp3</Play>
+    </Gather>
     <Hangup/>
 </Response>

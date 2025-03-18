@@ -15,7 +15,8 @@ A simple desktop application allowing audio calls, recording, transcribing and s
 - Make sure ngrok is installed in your system, and run the following command:
 `ngrok http 5000 [--url your_url_if_exists]`
 - Copy the ngrok URL into the endpoint of the TwiML App. You will not be able to make calls yet, but will be able to do so when running the Python app.
-- Copy all of the environment variables into the .env.template file.
+- Copy all of the environment variables into the .env.template file, and rename it to your .env file.
+
 ## Installation
 
 1. Install the required dependencies:
