@@ -54,6 +54,20 @@ def media_fallback():
     print(f"Headers: {dict(request.headers)}")
     return "WebSocket endpoint", 200
 
+@app.route("/sms", methods=['POST'])
+def incoming_sms():
+    # Get the message content
+    incoming_message = request.values.get('Body', '').strip()
+    from_number = request.values.get('From', '')
+    
+    print(f"From: {from_number}")
+    print(f"Message: {incoming_message}")
+    with open(f"outputs/{from_number}.txt", "a") as f:
+        f.write(f"\nInput: {incoming_message}")
+
+    signals.incoming_msg.emit(from_number, incoming_message)
+    return ""
+
 @sock.route('/media')
 def media_stream(ws):
     print("WebSocket connected")

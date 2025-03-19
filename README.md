@@ -6,6 +6,7 @@ A simple desktop application allowing audio calls, recording, transcribing and s
 - Send or Receive calls to/from your Twilio phone number
 - Realtime transcription of the call
 - Save recordings in WAV format, and transcripts in a .txt file
+- Chat with people in a secure manner!
 
 ## Twilio & ngrok Setup
 - Get a Twilio Account SID and Auth Token from [here](https://www.twilio.com/console)
@@ -17,7 +18,7 @@ A simple desktop application allowing audio calls, recording, transcribing and s
 - Copy the ngrok URL into the endpoint of the TwiML App. You will not be able to make calls yet, but will be able to do so when running the Python app.
 - Copy all of the environment variables into the .env.template file, and rename it to your .env file.
 
-## Installation
+## Setup
 
 1. Install the required dependencies:
 ```bash
@@ -28,11 +29,6 @@ pip install -r requirements.txt
 ```bash
 python main.py
 ```
-
-## Usage
-1. Select an input device from the dropdown menu.
-2. Click "Start Recording" to begin recording
-3. Click "Stop Recording" to stop and save the recording
 
 ## Note
 Make sure you have the necessary permissions and consent before recording any conversations.
