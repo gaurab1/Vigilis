@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Gather action="{{url}}/accept" method="POST" timeout="10">
+        <Play loop="0">https://api.twilio.com/cowbell.mp3</Play>
+    </Gather>
+    <Hangup/>
+</Response>

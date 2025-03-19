@@ -91,7 +91,6 @@ HeaderStyle = f"""
 StatusStyle = f"""
             font-size: 16px;
             color: {COLORS['text']};
-            font-weight: bold;
         """
 
 TranscriptLabelStyle = f"""
