@@ -2,7 +2,7 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QLabel,
                             QPushButton, QComboBox, QHBoxLayout, QGroupBox, 
                             QTextEdit, QFrame, QLineEdit, QDialog, QApplication, QSizePolicy,
                             QStackedWidget, QListWidget, QListWidgetItem, QSplitter, QMessageBox, QScrollArea,
-                            QGridLayout)
+                            QGridLayout, QStyledItemDelegate, QStyle)
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QSize
 from PyQt6.QtGui import QIcon, QFont, QTextCursor, QTextBlockFormat, QTextCharFormat, QColor, QTextFormat
 from datetime import datetime
@@ -57,6 +57,52 @@ class IncomingCallDialog(QDialog):
         layout.addLayout(button_layout)
         self.setLayout(layout)
 
+class PhoneListItemDelegate(QStyledItemDelegate):
+    def paint(self, painter, option, index):
+        text = index.data(Qt.ItemDataRole.DisplayRole)
+        if text and "\n" in text:
+            parts = text.split("\n")
+            phone_number = parts[0]
+            message_and_date = parts[1].split("|||")
+            message = message_and_date[0]
+            date_str = message_and_date[1] if len(message_and_date) > 1 else ""
+            
+            painter.save()
+            
+            if option.state & QStyle.StateFlag.State_Selected:
+                painter.fillRect(option.rect, QColor("#3498db"))
+            
+            # make phone number bold
+            bold_font = QFont(option.font)
+            bold_font.setBold(True)
+            painter.setFont(bold_font)
+            
+            phone_rect = option.rect.adjusted(5, 5, 0, 0)
+            painter.setPen(Qt.GlobalColor.black if not (option.state & QStyle.StateFlag.State_Selected) else option.palette.highlightedText().color())
+            painter.drawText(phone_rect, Qt.AlignmentFlag.AlignLeft, phone_number)
+
+            font_metrics = painter.fontMetrics()
+            first_line_height = font_metrics.height()
+            
+            normal_font = QFont(option.font)
+            normal_font.setBold(False)
+            painter.setFont(normal_font)
+            
+            message_rect = option.rect.adjusted(5, 5 + first_line_height, -15, 0)
+            painter.drawText(message_rect, Qt.AlignmentFlag.AlignLeft, message)
+            
+            # make the date italic
+            if date_str:
+                italic_font = QFont(option.font)
+                italic_font.setItalic(True)
+                painter.setFont(italic_font)
+                date_rect = option.rect.adjusted(5, 5 + first_line_height, -15, 0)
+                painter.drawText(date_rect, Qt.AlignmentFlag.AlignRight, date_str)
+            
+            painter.restore()
+        else:
+            super().paint(painter, option, index)
+
 class MenuScreen(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -72,8 +118,6 @@ class MenuScreen(QWidget):
         title_label.setStyleSheet(HeaderStyle)
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title_label)
-        
-
         
         # Add some space
         spacer = QWidget()
@@ -174,6 +218,11 @@ class MessageScreen(QWidget):
         self.phone_list = QListWidget()
         self.phone_list.setFixedWidth(200)
         self.phone_list.currentItemChanged.connect(self.load_chat_history)
+        
+        # Set custom delegate for phone list items
+        self.phone_delegate = PhoneListItemDelegate()
+        self.phone_list.setItemDelegate(self.phone_delegate)
+        
         self.phone_list.setStyleSheet("""
             QListWidget {
                 background-color: #f8f9fa;
@@ -198,6 +247,7 @@ class MessageScreen(QWidget):
                 color: white;
             }
         """)
+        
         content_layout.addWidget(self.phone_list)
         
         # Chat panel
@@ -281,27 +331,37 @@ class MessageScreen(QWidget):
 
     def load_phone_numbers(self):
         """Load phone numbers from the output directory"""
-        current_numbers = set()
-        for i in range(self.phone_list.count()):
-            current_numbers.add(self.phone_list.item(i).text())
-        
+        active_number = self.phone_list.currentItem().text().split("\n")[0] if self.phone_list.currentItem() else None
+        self.phone_list.clear()
+        sorted_numbers = {}
         output_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "outputs")
-        
+            
         # Look for .txt files that match phone number pattern
         for file in os.listdir(output_dir):
             if file.endswith(".txt") and file.startswith("+"):
                 phone_number = file.replace(".txt", "")
-                # Only add if not already in the list
-                if phone_number not in current_numbers:
-                    item = QListWidgetItem(phone_number)
-                    self.phone_list.addItem(item)
+                date = os.path.getmtime(os.path.join(output_dir, file))
+                date_str = datetime.fromtimestamp(date).strftime("%H:%M")
+                with open(os.path.join(output_dir, file), 'r') as f:
+                    last_message = f.read().strip().split("\n")[-1].strip()
+                    last_message = last_message.replace("Input:", "").replace("Output:", "")
+                    if len(last_message) > 23:
+                        last_message = last_message[:20] + "..."
+                sorted_numbers[date] = (phone_number, last_message, date_str)
+
+        sorted_numbers = sorted(sorted_numbers.items(), key=lambda x: x[0], reverse=True)
+        for date, (phone_number, last_message, date_str) in sorted_numbers:
+            item = QListWidgetItem(f"{phone_number}\n{last_message}|||{date_str}")
+            self.phone_list.addItem(item)
+            if active_number and phone_number == active_number:
+                self.phone_list.setCurrentItem(item)
     
     def load_chat_history(self, current_item, previous_item):
         """Load chat history for the selected phone number"""
         if not current_item:
             return
         
-        phone_number = current_item.text()
+        phone_number = current_item.text().split("\n")[0]
         
         # Clear previous chat content
         # Delete all widgets from the layout
@@ -338,6 +398,11 @@ class MessageScreen(QWidget):
             self.chat_scroll.verticalScrollBar().maximum()
         ))
 
+    def twilio_send_sms(self, phone_number, message):
+        twilio_sms = TwilioSMS()
+        response = twilio_sms.send_sms(phone_number, message)
+        return response
+
     def send_message(self):
         """Send a new message"""
         message = self.message_input.text().strip()
@@ -349,7 +414,7 @@ class MessageScreen(QWidget):
             QMessageBox.warning(self, "No Contact Selected", "Please select a contact to send a message to.")
             return
             
-        phone_number = current_item.text()
+        phone_number = current_item.text().split("\n")[0]
         output_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "outputs")
         file_path = os.path.join(output_dir, f"{phone_number}.txt")
         
@@ -362,9 +427,11 @@ class MessageScreen(QWidget):
             
             # Reload the chat history to show the new message
             self.load_chat_history(current_item, None)
+            self.load_phone_numbers()
             
             # TODO: Implement actual SMS sending functionality
             # This would connect to the Twilio API to send the message
+            self.twilio_send_sms(phone_number, message)
             
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to send message: {str(e)}")
@@ -467,7 +534,6 @@ class MainWindow(QMainWindow):
         
         call_layout.addLayout(header_layout)
         
-        # Call controls
         self.setup_call_controls(call_layout)
         self.setup_controls(call_layout)
         self.setup_transcription(call_layout)
@@ -475,8 +541,7 @@ class MainWindow(QMainWindow):
     def handle_incoming_msg(self, caller_number, message):
         if self.stacked_widget.currentIndex() == 2:
             self.message_screen.load_phone_numbers()
-            print(self.message_screen.phone_list.currentItem())
-            if self.message_screen.phone_list.currentItem() and self.message_screen.phone_list.currentItem().text() == caller_number:
+            if self.message_screen.phone_list.currentItem() and self.message_screen.phone_list.currentItem().text().split("\n")[0] == caller_number:
                 self.message_screen.load_chat_history(self.message_screen.phone_list.currentItem(), None)
 
     def handle_incoming_call(self, caller_number=None, caller_state=None, call_sid=None):
@@ -618,7 +683,6 @@ class MainWindow(QMainWindow):
             self.timer.start(1000)  # Update every second
             self.status_text[2] = "Recording... 00:00"
             self.update_status_label()
-            # self.status_label.setText("\n".join(self.status_text))
         else:
             self.stop_recording()
 
