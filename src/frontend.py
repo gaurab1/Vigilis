@@ -113,7 +113,7 @@ class MenuScreen(QWidget):
     def setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setSpacing(20)
-        layout.setContentsMargins(30, 10, 30, 30)  # Reduced top margin
+        layout.setContentsMargins(50, 10, 50, 30)  # Reduced top margin
         
         # Title
         title_label = QLabel("Fraud-Protected Communication App")
@@ -151,27 +151,54 @@ class MenuScreen(QWidget):
         
         # Buttons container
         buttons_frame = StyleFrame()
-        buttons_layout = QVBoxLayout(buttons_frame)
+        buttons_frame.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+
+        buttons_layout = QGridLayout(buttons_frame)
         buttons_layout.setSpacing(20)
         
         # Call platform button
         self.call_platform_button = QPushButton("Secure Call Platform")
-        self.call_platform_button.setMinimumHeight(70)  # Slightly reduced height
+        self.call_platform_button.setMinimumHeight(70)
         self.call_platform_button.setFont(QFont("Arial", 14))
         self.call_platform_button.setStyleSheet(button_style + "background-color: #4CAF50; color: white;")
-        buttons_layout.addWidget(self.call_platform_button)
+        self.call_platform_button.setIcon(QIcon(os.path.join("assets", "icons", "call.svg")))
+        self.call_platform_button.setIconSize(QSize(32, 32))
+        buttons_layout.addWidget(self.call_platform_button, 0, 0)
         
         # Messaging platform button
         self.message_button = QPushButton("Secure Messaging Platform")
-        self.message_button.setMinimumHeight(70)  # Slightly reduced height
+        self.message_button.setMinimumHeight(70)
         self.message_button.setFont(QFont("Arial", 14))
         self.message_button.setStyleSheet(message_button_style + "background-color: #2196F3; color: white;")
-        buttons_layout.addWidget(self.message_button)
+        self.message_button.setIcon(QIcon(os.path.join("assets", "icons", "message.svg")))
+        self.message_button.setIconSize(QSize(32, 32))
+        buttons_layout.addWidget(self.message_button, 0, 1)
+
+        # Payment System button
+        self.payment_button = QPushButton("Secure Payment System")
+        self.payment_button.setMinimumHeight(70)    
+        self.payment_button.setFont(QFont("Arial", 14))
+        self.payment_button.setStyleSheet(message_button_style + "background-color: #2196F3; color: white;")
+        self.payment_button.setIcon(QIcon(os.path.join("assets", "icons", "payment.svg")))
+        self.payment_button.setIconSize(QSize(32, 32))
+        buttons_layout.addWidget(self.payment_button, 1, 0)
+        
+        # Contact Book button
+        self.contact_book_button = QPushButton("Contact Book")
+        self.contact_book_button.setMinimumHeight(70)
+        self.contact_book_button.setFont(QFont("Arial", 14))
+        self.contact_book_button.setStyleSheet(message_button_style + "background-color: #2196F3; color: white;")
+        self.contact_book_button.setIcon(QIcon(os.path.join("assets", "icons", "contacts.svg")))
+        self.contact_book_button.setIconSize(QSize(32, 32))
+        buttons_layout.addWidget(self.contact_book_button, 1, 1)
         
         layout.addWidget(buttons_frame)
         
         # Add some spacing
         layout.addStretch()
+        footer_label = QLabel("Created by Gaurab Das (gaurabd@mit.edu) for his M.Eng. Project")
+        footer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(footer_label)
 
 class MessageScreen(QWidget):
     def __init__(self, parent=None):
