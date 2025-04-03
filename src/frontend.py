@@ -10,6 +10,8 @@ import os
 from src.styles import *
 import json
 from twilio.rest import Client
+from src.twilio_text import TwilioSMS
+from src.model import predict_label
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -216,13 +218,8 @@ class MessageScreen(QWidget):
         
         # Phone number list
         self.phone_list = QListWidget()
-        self.phone_list.setFixedWidth(200)
+        self.phone_list.setItemDelegate(PhoneListItemDelegate())
         self.phone_list.currentItemChanged.connect(self.load_chat_history)
-        
-        # Set custom delegate for phone list items
-        self.phone_delegate = PhoneListItemDelegate()
-        self.phone_list.setItemDelegate(self.phone_delegate)
-        
         self.phone_list.setStyleSheet("""
             QListWidget {
                 background-color: #f8f9fa;
@@ -248,7 +245,22 @@ class MessageScreen(QWidget):
             }
         """)
         
-        content_layout.addWidget(self.phone_list)
+        # Add a container for the phone list and button
+        phone_container = QWidget()
+        phone_container.setFixedWidth(200)
+        phone_layout = QVBoxLayout(phone_container)
+        phone_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Add the phone list to the container
+        phone_layout.addWidget(self.phone_list)
+        
+        # Add a "New Message" button below the phone list
+        new_message_button = QPushButton("New Conversation")
+        new_message_button.clicked.connect(self.new_message_dialog)
+        phone_layout.addWidget(new_message_button)
+        
+        # Add the container to the content layout
+        content_layout.addWidget(phone_container)
         
         # Chat panel
         chat_panel = QWidget()
@@ -264,8 +276,8 @@ class MessageScreen(QWidget):
         self.chat_content = QWidget()
         self.chat_layout = QVBoxLayout(self.chat_content)
         self.chat_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        self.chat_layout.setSpacing(15)  # Space between messages
-        self.chat_layout.setContentsMargins(20, 20, 20, 20)  # Margins around chat content
+        self.chat_layout.setSpacing(5)  # Space between messages
+        self.chat_layout.setContentsMargins(10, 10, 10, 10)  # Margins around chat content
         
         self.chat_scroll.setWidget(self.chat_content)
         chat_layout.addWidget(self.chat_scroll)
@@ -291,7 +303,7 @@ class MessageScreen(QWidget):
     def create_message_label(self, message, is_output=False):
         label = QLabel(message)
         label.setWordWrap(True)
-        label.setMaximumWidth(int(self.chat_scroll.width() * 0.8))
+        label.setMaximumWidth(int(self.chat_scroll.width()))
         
         if is_output:
             label.setStyleSheet("""
@@ -328,6 +340,89 @@ class MessageScreen(QWidget):
             grid.setColumnStretch(1, 1)   # Make right column stretch
         
         return container
+
+    def create_spam_label(self, spam_prob):
+        container = QWidget()
+        main_layout = QVBoxLayout(container)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        
+        # Create a single container for both the message and buttons
+        content_container = QWidget()
+        content_container.setStyleSheet(f"""
+            background-color: {COLORS['accent']};
+            border-radius: 10px;
+        """)
+        
+        content_layout = QVBoxLayout(content_container)
+        content_layout.setContentsMargins(10, 10, 10, 10)
+        content_layout.setSpacing(4)
+        
+        # Main spam warning label
+        label = QLabel(f"Potential scam detected in this text with {int(spam_prob * 100)}% confidence.")
+        label.setStyleSheet("""
+            color: white;
+            font-size: 14px;
+            text-align: justify;
+        """)
+        
+        button_container = QWidget()
+        button_container.setVisible(False)
+        button_layout = QHBoxLayout(button_container)
+        button_layout.setContentsMargins(0, 0, 0, 0)
+        button_layout.setSpacing(4)
+        button_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        
+        # Block button
+        block_button = QPushButton("Block")
+        block_button.setFixedSize(100, 30)
+        block_button.setStyleSheet("""
+            background-color: white;
+            color: black;
+            border-radius: 5px;
+            padding: 5px 10px;
+            font-size: 12px;
+            font-weight: bold;
+        """)
+        block_button.clicked.connect(lambda: self.block_sender())
+        
+        # Ignore button
+        ignore_button = QPushButton("Ignore")
+        ignore_button.setFixedSize(100, 30)
+        ignore_button.setStyleSheet("""
+            background-color: white;
+            color: black;
+            border-radius: 5px;
+            padding: 5px 10px;
+            font-size: 12px;
+        """)
+        ignore_button.clicked.connect(lambda: container.setVisible(False))
+        
+        # Add buttons to layout
+        button_layout.addWidget(block_button)
+        button_layout.addWidget(ignore_button)
+        
+        # Add widgets to content layout
+        content_layout.addWidget(label)
+        content_layout.addWidget(button_container)
+        
+        # Add content container to main layout
+        main_layout.addWidget(content_container)
+        
+        # Make the label clickable to show/hide buttons
+        label.mousePressEvent = lambda event: button_container.setVisible(not button_container.isVisible())
+        label.setCursor(Qt.CursorShape.PointingHandCursor)
+        
+        return container
+    
+    def block_sender(self):
+        # Placeholder for blocking functionality
+        current_number = self.phone_list.currentItem().text().split("\n")[0] if self.phone_list.currentItem() else None
+        if current_number:
+            QMessageBox.information(self, "Block Sender", f"Sender {current_number} has been blocked.")
+            self.phone_list.setCurrentItem(None)
+            os.remove(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "outputs", f"{current_number}.txt"))
+            self.load_phone_numbers()
 
     def load_phone_numbers(self):
         """Load phone numbers from the output directory"""
@@ -383,25 +478,89 @@ class MessageScreen(QWidget):
                 message = line[len("Output:"):].strip()
                 message_widget = self.create_message_label(message, is_output=True)
                 self.chat_layout.addWidget(message_widget)
-                
             elif line.startswith("Input:"):
                 # Message from them
                 message = line[len("Input:"):].strip()
                 message_widget = self.create_message_label(message, is_output=False)
                 self.chat_layout.addWidget(message_widget)
-        
+                spam_prob = predict_label(message)
+                if spam_prob > 0.9:
+                    spam_label = self.create_spam_label(spam_prob)
+                    self.chat_layout.addWidget(spam_label)
+
         # Add a spacer at the bottom to push messages up
         self.chat_layout.addStretch()
         
         # Scroll to the bottom
-        QTimer.singleShot(100, lambda: self.chat_scroll.verticalScrollBar().setValue(
+        QTimer.singleShot(200, lambda: self.chat_scroll.verticalScrollBar().setValue(
             self.chat_scroll.verticalScrollBar().maximum()
         ))
 
     def twilio_send_sms(self, phone_number, message):
-        twilio_sms = TwilioSMS()
-        response = twilio_sms.send_sms(phone_number, message)
-        return response
+        # twilio_sms = TwilioSMS()
+        # response = twilio_sms.send_sms(phone_number, message)
+        # return response
+        pass
+
+    def new_message_dialog(self):
+        """Open a dialog to add a new phone number"""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("New Conversation")
+        dialog.setMinimumWidth(300)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # Phone number input
+        phone_layout = QHBoxLayout()
+        phone_label = QLabel("Phone Number:")
+        phone_layout.addWidget(phone_label)
+        
+        phone_input = QLineEdit()
+        phone_input.setPlaceholderText("+1234567890")
+        phone_layout.addWidget(phone_input)
+        layout.addLayout(phone_layout)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(dialog.reject)
+        button_layout.addWidget(cancel_button)
+        
+        add_button = QPushButton("Add")
+        add_button.setStyleSheet("background-color: #2ecc71; color: white;")
+        
+        def add_new_number():
+            phone = phone_input.text().strip()
+                
+            try:
+                # Create a new conversation file if it doesn't exist
+                output_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "outputs")
+                os.makedirs(output_dir, exist_ok=True)
+                
+                file_path = os.path.join(output_dir, f"{phone}.txt")
+                if not os.path.exists(file_path):
+                    with open(file_path, "w") as f:
+                        pass
+                
+                # Reload the phone list to show the new conversation
+                self.load_phone_numbers()
+                
+                # Find and select the new conversation
+                for i in range(self.phone_list.count()):
+                    item = self.phone_list.item(i)
+                    if phone in item.text():
+                        self.phone_list.setCurrentItem(item)
+                        break
+                
+                dialog.accept()
+            except Exception as e:
+                QMessageBox.critical(dialog, "Error", f"Failed to add number: {str(e)}")
+        
+        add_button.clicked.connect(add_new_number)
+        button_layout.addWidget(add_button)
+        layout.addLayout(button_layout)
+        
+        dialog.exec()
 
     def send_message(self):
         """Send a new message"""
@@ -585,7 +744,7 @@ class MainWindow(QMainWindow):
             self.status_text[2] = "Recording... 00:00"
             self.update_status_label()
             self.audio_recorder.start_recording()
-    
+
     def update_call_status(self, status):
         if status == "start":
             self.timer.start(1000)  # Update every second
