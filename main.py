@@ -62,7 +62,7 @@ def incoming_sms():
     
     print(f"From: {from_number}")
     print(f"Message: {incoming_message}")
-    with open(f"outputs/{from_number}.txt", "a") as f:
+    with open(f"outputs/messages/{from_number}.txt", "a") as f:
         f.write(f"\nInput: {incoming_message}")
 
     signals.incoming_msg.emit(from_number, incoming_message)
@@ -84,7 +84,6 @@ def media_stream(ws):
                 caller_state = data['start']['customParameters']['caller_state']
                 window.audio_recorder.start_call(data['start']['streamSid'], ws)
                 if window:
-                    # window.handle_incoming_call(caller_number, caller_state)
                     window.start_recording_from_call()
                     signals.call_status_changed.emit("start")
                     

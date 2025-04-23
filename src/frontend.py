@@ -3,15 +3,17 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QLabel,
                             QTextEdit, QFrame, QLineEdit, QDialog, QApplication, QSizePolicy,
                             QStackedWidget, QListWidget, QListWidgetItem, QSplitter, QMessageBox, QScrollArea,
                             QGridLayout, QStyledItemDelegate, QStyle)
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QSize
-from PyQt6.QtGui import QIcon, QFont, QTextCursor, QTextBlockFormat, QTextCharFormat, QColor, QTextFormat
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QSize, QThread, QUrl
+from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtGui import QIcon, QMovie, QFont, QTextCursor, QTextBlockFormat, QTextCharFormat, QColor, QTextFormat
 from datetime import datetime
 import os
 from src.styles import *
+from src.context_search import find_context
 import json
 from twilio.rest import Client
 from src.twilio_text import TwilioSMS
-from src.model import predict_label
+from src.model import predict_label, predict_call_spam
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -74,7 +76,6 @@ class PhoneListItemDelegate(QStyledItemDelegate):
             if option.state & QStyle.StateFlag.State_Selected:
                 painter.fillRect(option.rect, QColor("#3498db"))
             
-            # make phone number bold
             bold_font = QFont(option.font)
             bold_font.setBold(True)
             painter.setFont(bold_font)
@@ -93,7 +94,6 @@ class PhoneListItemDelegate(QStyledItemDelegate):
             message_rect = option.rect.adjusted(5, 5 + first_line_height, -15, 0)
             painter.drawText(message_rect, Qt.AlignmentFlag.AlignLeft, message)
             
-            # make the date italic
             if date_str:
                 italic_font = QFont(option.font)
                 italic_font.setItalic(True)
@@ -200,6 +200,240 @@ class MenuScreen(QWidget):
         footer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(footer_label)
 
+class ContactBook(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setup_ui()
+    
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        
+        # Header with back button - more compact
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 10)  # Add bottom margin
+        
+        # Back button as an icon
+        self.back_button = QPushButton()
+        self.back_button.setIcon(QIcon.fromTheme("go-home", QIcon(":/icons/edit-undo.png")))
+        self.back_button.setIconSize(QSize(24, 24))
+        self.back_button.setFixedSize(36, 36)
+        self.back_button.setStyleSheet("background-color: transparent;")
+        self.back_button.setToolTip("Back to Menu")
+        
+        # Create a container for the back button
+        back_container = QHBoxLayout()
+        back_container.addWidget(self.back_button)
+        back_container.addStretch()
+        
+        # Title in its own layout to ensure it's centered in the available space
+        title_container = QHBoxLayout()
+        header_label = QLabel("Contact Book")
+        header_label.setStyleSheet(HeaderStyle)
+        header_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title_container.addWidget(header_label)
+        
+        # Main header layout with proper proportions
+        header_layout.addLayout(back_container, 1)  # Left side with back button
+        header_layout.addLayout(title_container, 5)  # Center with title (more space)
+        header_layout.addStretch(1)  # Right side empty space to balance
+        
+        layout.addLayout(header_layout)
+        phone_number_label = QLabel(f"Your phone number is {os.environ.get('TWILIO_PHONE_NUMBER')}\n\nMore Functionality Coming Soon!")
+        phone_number_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        phone_number_label.setStyleSheet("font-size: 16px;")
+        layout.addWidget(phone_number_label)
+        layout.addStretch()
+
+class ContextThread(QThread):
+    result_ready = pyqtSignal(str)
+    
+    def __init__(self, amount, to, description):
+        super().__init__()
+        self.amount = amount
+        self.to = to
+        self.description = description
+    
+    def run(self):
+        from src.context_search import find_context
+        context = find_context(self.amount, self.to, self.description)
+        self.result_ready.emit(context)
+
+class PaymentSystem(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.context_thread = None
+        self.loading_timer = None
+        self.dots_count = 0
+        self.setup_ui()
+    
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        
+        # Header with back button - more compact
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 10)  # Add bottom margin
+        
+        # Back button as an icon
+        self.back_button = QPushButton()
+        self.back_button.setIcon(QIcon.fromTheme("go-home", QIcon(":/icons/edit-undo.png")))
+        self.back_button.setIconSize(QSize(24, 24))
+        self.back_button.setFixedSize(36, 36)
+        self.back_button.setStyleSheet("background-color: transparent;")
+        self.back_button.setToolTip("Back to Menu")
+        
+        # Create a container for the back button
+        back_container = QHBoxLayout()
+        back_container.addWidget(self.back_button)
+        back_container.addStretch()
+        
+        # Title in its own layout to ensure it's centered in the available space
+        title_container = QHBoxLayout()
+        header_label = QLabel("Payment System")
+        header_label.setStyleSheet(HeaderStyle)
+        header_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title_container.addWidget(header_label)
+        
+        # Main header layout with proper proportions
+        header_layout.addLayout(back_container, 1)  # Left side with back button
+        header_layout.addLayout(title_container, 5)  # Center with title (more space)
+        header_layout.addStretch(1)  # Right side empty space to balance
+        layout.addLayout(header_layout)
+        
+        # Payment container for amount and recipient
+        payment_container = QHBoxLayout()
+        payment_container.addStretch()
+        
+        # Bold "Send $" label with improved styling
+        amount_label = QLabel("Send $")
+        amount_label.setStyleSheet("font-weight: bold; font-size: 16px; color: #2c3e50;")
+        payment_container.addWidget(amount_label)
+        
+        self.amount_input = QLineEdit()
+        self.amount_input.setPlaceholderText("20")
+        self.amount_input.setFixedWidth(50)
+        self.amount_input.setStyleSheet("font-size: 14px; padding: 1px; border-radius: 4px;")
+        payment_container.addWidget(self.amount_input)
+        
+        to_label = QLabel("   To")
+        to_label.setStyleSheet("font-weight: bold; font-size: 16px; color: #2c3e50;")
+        payment_container.addWidget(to_label)
+        
+        self.recipient_input = QLineEdit()
+        self.recipient_input.setPlaceholderText("Name/Phone Number")
+        self.recipient_input.setFixedWidth(200)
+        self.recipient_input.setStyleSheet("font-size: 14px; padding: 1px; border-radius: 4px;")
+        payment_container.addWidget(self.recipient_input)
+        payment_container.addStretch()
+        layout.addLayout(payment_container)
+
+        # Description field with bold heading
+        description_label = QLabel("Description: (Optional)")
+        description_label.setStyleSheet("font-weight: bold; font-size: 16px; color: #2c3e50; margin-top: 10px;")
+        layout.addWidget(description_label)
+        
+        self.description_input = QTextEdit()
+        self.description_input.setPlaceholderText("Enter reason for payment...")
+        self.description_input.setFixedHeight(150)
+        self.description_input.setStyleSheet("font-size: 14px; padding: 8px; border-radius: 4px; border: 1px solid #bdc3c7;")
+        layout.addWidget(self.description_input)
+
+        # Create a container for the Pay button to center it
+        button_layout = QHBoxLayout()
+        button_layout.addStretch(1)
+        self.pay_button = QPushButton("Pay")
+        self.pay_button.setFixedWidth(100)
+        self.pay_button.setFixedHeight(40)
+        self.pay_button.setStyleSheet("""
+            QPushButton {
+                background-color: #2ecc71;
+                color: white;
+                font-weight: bold;
+                font-size: 16px;
+                border-radius: 6px;
+                padding: 8px;
+            }
+            QPushButton:hover {
+                background-color: #27ae60;
+            }
+            QPushButton:pressed {
+                background-color: #219653;
+            }
+        """)
+        button_layout.addWidget(self.pay_button)
+        self.pay_button.clicked.connect(self.get_results)
+        button_layout.addStretch(1)
+        layout.addLayout(button_layout)
+
+        result_frame = StyleFrame()
+        result_layout = QVBoxLayout(result_frame)
+        
+        result_label = QLabel("Inferred Context")
+        result_label.setStyleSheet(TranscriptLabelStyle)
+        result_layout.addWidget(result_label)
+        
+        self.result_area = QTextEdit()
+        self.result_area.setReadOnly(True)
+        self.result_area.setPlaceholderText("Context will appear after clicking Pay.")
+        self.result_area.setAcceptRichText(True)
+        self.result_area.setMaximumHeight(100)
+        # Enable clickable links
+        self.result_area.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextBrowserInteraction
+        )
+        # Handle links internally instead of opening them automatically
+        # self.result_area.setOpenExternalLinks(True)
+        self.result_area.setStyleSheet("""
+            QTextEdit {
+                border: none;
+                background-color: white;
+                padding: 10px;
+                border-radius: 5px;
+            }
+        """)
+        result_layout.addWidget(self.result_area)
+        layout.addWidget(result_frame)
+        layout.addStretch()
+
+    def update_loading_dots(self):
+        # Update dots animation (cycling between 1-3 dots)
+        self.dots_count = (self.dots_count % 3) + 1
+        dots = '.' * self.dots_count
+        self.result_area.setPlaceholderText(f"Give it a second{dots}")
+    
+    def get_results(self):
+        to = self.recipient_input.text().strip()
+        amount = self.amount_input.text().strip()
+        description = self.description_input.toPlainText().strip()
+        
+        self.result_area.clear()
+        self.dots_count = 0
+        self.update_loading_dots()
+        self.pay_button.setEnabled(False)
+        
+        # Set up loading animation timer
+        if self.loading_timer is None:
+            self.loading_timer = QTimer(self)
+            self.loading_timer.timeout.connect(self.update_loading_dots)
+        self.loading_timer.start(500)
+        
+        # Clean up previous thread if exists
+        if self.context_thread and self.context_thread.isRunning():
+            self.context_thread.quit()
+            self.context_thread.wait()
+        
+        # Create and start a new thread for context search
+        self.context_thread = ContextThread(amount, to, description)
+        self.context_thread.result_ready.connect(self.display_context_result)
+        self.context_thread.finished.connect(lambda: self.pay_button.setEnabled(True))
+        self.context_thread.start()
+        
+    def display_context_result(self, context):
+        # Stop the loading animation
+        if self.loading_timer and self.loading_timer.isActive():
+            self.loading_timer.stop()
+        self.result_area.setHtml(context)
+
+
 class MessageScreen(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -228,7 +462,7 @@ class MessageScreen(QWidget):
         
         # Title in its own layout to ensure it's centered in the available space
         title_container = QHBoxLayout()
-        header_label = QLabel("Secure Messaging Platform")
+        header_label = QLabel("Contact Book")
         header_label.setStyleSheet(HeaderStyle)
         header_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title_container.addWidget(header_label)
@@ -272,29 +506,23 @@ class MessageScreen(QWidget):
             }
         """)
         
-        # Add a container for the phone list and button
         phone_container = QWidget()
         phone_container.setFixedWidth(200)
         phone_layout = QVBoxLayout(phone_container)
         phone_layout.setContentsMargins(0, 0, 0, 0)
         
-        # Add the phone list to the container
         phone_layout.addWidget(self.phone_list)
         
-        # Add a "New Message" button below the phone list
         new_message_button = QPushButton("New Conversation")
         new_message_button.clicked.connect(self.new_message_dialog)
         phone_layout.addWidget(new_message_button)
         
-        # Add the container to the content layout
         content_layout.addWidget(phone_container)
         
-        # Chat panel
         chat_panel = QWidget()
         chat_panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         chat_layout = QVBoxLayout(chat_panel)
         
-        # Replace QTextEdit with QScrollArea containing a QWidget with a QVBoxLayout
         self.chat_scroll = QScrollArea()
         self.chat_scroll.setWidgetResizable(True)
         self.chat_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -448,7 +676,7 @@ class MessageScreen(QWidget):
         if current_number:
             QMessageBox.information(self, "Block Sender", f"Sender {current_number} has been blocked.")
             self.phone_list.setCurrentItem(None)
-            os.remove(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "outputs", f"{current_number}.txt"))
+            os.remove(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "outputs", "messages", f"{current_number}.txt"))
             self.load_phone_numbers()
 
     def load_phone_numbers(self):
@@ -456,7 +684,7 @@ class MessageScreen(QWidget):
         active_number = self.phone_list.currentItem().text().split("\n")[0] if self.phone_list.currentItem() else None
         self.phone_list.clear()
         sorted_numbers = {}
-        output_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "outputs")
+        output_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "outputs", "messages")
             
         # Look for .txt files that match phone number pattern
         for file in os.listdir(output_dir):
@@ -493,7 +721,7 @@ class MessageScreen(QWidget):
                 item.widget().deleteLater()
         
         # Load chat history from file
-        output_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "outputs")
+        output_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "outputs", "messages")
         file_path = os.path.join(output_dir, f"{phone_number}.txt")
         with open(file_path, "r") as f:
             lines = f.readlines()
@@ -524,10 +752,9 @@ class MessageScreen(QWidget):
         ))
 
     def twilio_send_sms(self, phone_number, message):
-        # twilio_sms = TwilioSMS()
-        # response = twilio_sms.send_sms(phone_number, message)
-        # return response
-        pass
+        twilio_sms = TwilioSMS()
+        response = twilio_sms.send_sms(phone_number, message)
+        return response
 
     def new_message_dialog(self):
         """Open a dialog to add a new phone number"""
@@ -561,7 +788,7 @@ class MessageScreen(QWidget):
                 
             try:
                 # Create a new conversation file if it doesn't exist
-                output_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "outputs")
+                output_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "outputs", "messages")
                 os.makedirs(output_dir, exist_ok=True)
                 
                 file_path = os.path.join(output_dir, f"{phone}.txt")
@@ -601,7 +828,7 @@ class MessageScreen(QWidget):
             return
             
         phone_number = current_item.text().split("\n")[0]
-        output_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "outputs")
+        output_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "outputs", "messages")
         file_path = os.path.join(output_dir, f"{phone_number}.txt")
         
         try:
@@ -637,7 +864,7 @@ class MainWindow(QMainWindow):
         self.setup_ui()
         
     def setup_ui(self):
-        self.setWindowTitle("Secure Communication App")
+        self.setWindowTitle("Vigilis")
         self.setGeometry(100, 100, 1000, 700)  # Reduced height from 800 to 700
         self.setStyleSheet(UIStyle)
         
@@ -648,23 +875,31 @@ class MainWindow(QMainWindow):
         self.stacked_widget = QStackedWidget()
         self.setCentralWidget(self.stacked_widget)
         
-        # Create menu screen
         self.menu_screen = MenuScreen()
         self.stacked_widget.addWidget(self.menu_screen)
         
-        # Create call screen
         self.call_screen = QWidget()
         self.setup_call_screen()
         self.stacked_widget.addWidget(self.call_screen)
         
-        # Create message screen
         self.message_screen = MessageScreen()
         self.stacked_widget.addWidget(self.message_screen)
+        
+        self.contact_book_screen = ContactBook()
+        self.stacked_widget.addWidget(self.contact_book_screen)
+
+        self.payment_system_screen = PaymentSystem()
+        self.stacked_widget.addWidget(self.payment_system_screen)
         
         # Connect buttons
         self.menu_screen.call_platform_button.clicked.connect(self.show_call_screen)
         self.menu_screen.message_button.clicked.connect(self.show_message_screen)
+        self.menu_screen.contact_book_button.clicked.connect(self.show_contact_book)
+        self.menu_screen.payment_button.clicked.connect(self.show_payment_screen)
+
         self.message_screen.back_button.clicked.connect(self.show_menu_screen)
+        self.contact_book_screen.back_button.clicked.connect(self.show_menu_screen)
+        self.payment_system_screen.back_button.clicked.connect(self.show_menu_screen)
         
         # Start with menu screen
         self.stacked_widget.setCurrentIndex(0)
@@ -682,6 +917,12 @@ class MainWindow(QMainWindow):
         
     def show_message_screen(self):
         self.stacked_widget.setCurrentIndex(2)
+    
+    def show_contact_book(self):
+        self.stacked_widget.setCurrentIndex(3)
+
+    def show_payment_screen(self):
+        self.stacked_widget.setCurrentIndex(4)
     
     def setup_call_screen(self):
         call_layout = QVBoxLayout(self.call_screen)
@@ -733,6 +974,7 @@ class MainWindow(QMainWindow):
     def handle_incoming_call(self, caller_number=None, caller_state=None, call_sid=None):
         """Handle an incoming phone call by showing a modal dialog"""
         self.pending_call_sid = call_sid
+        self.caller_number = caller_number
         
         # Show incoming call dialog
         dialog = IncomingCallDialog(caller_number, caller_state, self)
@@ -768,6 +1010,7 @@ class MainWindow(QMainWindow):
             self.recording_start_time = datetime.now()
             self.record_button.setText("Recording (In Call)")
             self.record_button.setStyleSheet("background-color: red")
+            self.timer.start(1000)  # Update every second
             self.status_text[2] = "Recording... 00:00"
             self.update_status_label()
             self.audio_recorder.start_recording()
@@ -778,7 +1021,7 @@ class MainWindow(QMainWindow):
             self.transcript_area.clear()
         elif status == "stop":
             self.timer.stop()
-            self.stop_recording()
+            self.stop_recording(self.caller_number)
 
     def setup_icon(self):
         icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'assets', 'icon.png')
@@ -872,10 +1115,11 @@ class MainWindow(QMainWindow):
         else:
             self.stop_recording()
 
-    def stop_recording(self):
+    def stop_recording(self, call_number=None):
         if self.audio_recorder.is_recording:
             transcript = self.transcript_area.toPlainText()
-            message = self.audio_recorder.stop_recording(transcript)
+            print(call_number)
+            message = self.audio_recorder.stop_recording(transcript, call_number)
             self.status_label.setText(message)
             self.record_button.setText("Start Recording")
             self.record_button.setStyleSheet("")
@@ -904,11 +1148,24 @@ class MainWindow(QMainWindow):
         
         if current_text:
             if prefix == self.last_prefix:
-                cursor.insertHtml(f" {content}")
+                cursor.insertHtml(f"&nbsp;{content.replace('.', '')}")
             else:
-                cursor.insertHtml(f"<br><b>{prefix}</b>: {content}")
+                if current_text[-1] not in ['.', '!', '?']:
+                    cursor.insertHtml(f".<br><b>{prefix}</b>: {content.replace('.', '')}")
+                    current_text += f".\n{prefix}: {content}"
+                else:
+                    cursor.insertHtml(f"<br><b>{prefix}</b>: {content.replace('.', '')}")
+                    current_text += f"\n{prefix}: {content}"
+                spam = predict_call_spam(current_text[max(0, len(current_text)-700):])
+                print(spam)
+                if spam > 0.5 and not hasattr(self, '_spam_warning_shown'):
+                    cursor.insertHtml(f"<br><span style='color: red; font-weight: bold;'>POTENTIAL SCAM DETECTED</span>")
+                    self._spam_warning_shown = True
+                    QTimer.singleShot(100, lambda: self._show_spam_warning(spam))
         else:
-            cursor.insertHtml(f"<b>{prefix}</b>: {content}")
+            cursor.insertHtml(f"<b>{prefix}</b>: {content.replace('.', '')}")
+            current_text += f"\n{prefix}: {content}"
+            
         
         self.last_prefix = prefix
         
@@ -943,7 +1200,6 @@ class MainWindow(QMainWindow):
         """Initiate an outbound call"""
         phone_number = self.phone_input.text().strip()
         if not phone_number:
-            print("Please enter a phone number")
             return
             
         call_sid = make_outbound_call(phone_number)
@@ -956,6 +1212,9 @@ class MainWindow(QMainWindow):
     def end_call(self):
         """End the current call"""
         if self.audio_recorder and self.audio_recorder.ws:
+            call_number = self.caller_number
+            delattr(self, 'caller_number')
+
             # Close the WebSocket connection
             close_message = {
                 "event": "stop",
@@ -966,7 +1225,25 @@ class MainWindow(QMainWindow):
             # Terminate the call on the server
             self.audio_recorder.ws.close()
             self.audio_recorder.stop_call()
-            self.stop_recording()
+            self.stop_recording(call_number)
+
+    def _show_spam_warning(self, spam_probability):
+        """Show a warning dialog about potential spam/scam"""
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Icon.Warning)
+        msg.setWindowTitle("⚠️ Potential Scam Alert")
+        msg.setText("<h3>Potential scam detected in this call!</h3>")
+        
+        details = f"""Our AI has detected patterns in this conversation that appear similar to known scams.
+        
+        Scam probability: {spam_probability * 100:.1f}%"""
+        
+        msg.setInformativeText(details)
+        msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+        msg.setDefaultButton(QMessageBox.StandardButton.Ok)
+        
+        # Show the dialog (non-modal so it doesn't block the application)
+        msg.show()
 
     def update_status_label(self):
         html_status = [f"<b>{self.status_text[0]}</b>", 

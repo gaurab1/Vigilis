@@ -66,8 +66,8 @@ class AudioRecorder:
         self.mix_frames = []
         
         def mic_callback(indata, frames, time, status):
-            if status:
-                print(f"Mic Status: {status}")
+            # if status:
+            #     print(f"Mic Status: {status}")
             self.mic_frames.append(indata.copy())
             self.input_transcriber.queue_audio(indata)
 
@@ -87,10 +87,7 @@ class AudioRecorder:
             }
             
             # Send through websocket
-            try:
-                self.ws.send(json.dumps(message))
-            except Exception as e:
-                print(f"Error sending audio: {e}")
+            self.ws.send(json.dumps(message))
 
         def mix_callback(indata, frames, time, status):
             if status:
@@ -100,15 +97,13 @@ class AudioRecorder:
 
         def _audio_callback_output(outdata, frames, time, status):
             """Callback for audio output"""
+            # if status:
+            #     print(f"Output status: {status}")
             try:
                 data = self.audio_queue.get_nowait()
                 self.mix_frames.append(data.copy())
                 self.mix_transcriber.queue_audio(data)
-                if len(data) < len(outdata):
-                    outdata[:len(data)] = data
-                    outdata[len(data):] = np.zeros((len(outdata) - len(data), 1), dtype=np.int16)
-                else:
-                    outdata[:] = data[:len(outdata)]
+                outdata[:] = data[:len(outdata)]
             except queue.Empty:
                 outdata[:] = np.zeros((len(outdata), 1), dtype=np.int16)
                    
@@ -137,6 +132,7 @@ class AudioRecorder:
             channels=1,
             dtype=np.int16,
             callback=_audio_callback_output,
+            blocksize=160,
             latency='low'
         )
 
@@ -171,7 +167,7 @@ class AudioRecorder:
         pcm_array = pcm_array.reshape(-1, 1)
         self.audio_queue.put(pcm_array)
 
-    def stop_recording(self, transcript_text=None):
+    def stop_recording(self, transcript_text=None, call_number=None):
         if not self.is_recording:
             return
             
@@ -185,8 +181,8 @@ class AudioRecorder:
             self.mix_stream.close()
         
         # Save recordings
-        timestamp = datetime.now().strftime("%Y-%m-%d@%H-%M")
-        directory = f"outputs/{timestamp}"
+        timestamp = datetime.now().strftime("%m-%d@%H-%M")
+        directory = f"outputs/phone_calls/{timestamp}" + f"_from_{call_number}" if call_number else ""
         os.makedirs(directory, exist_ok=True)
 
         # Save audio files
