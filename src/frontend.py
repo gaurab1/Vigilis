@@ -116,7 +116,7 @@ class MenuScreen(QWidget):
         layout.setContentsMargins(50, 10, 50, 30)  # Reduced top margin
         
         # Title
-        title_label = QLabel("Fraud-Protected Communication App")
+        title_label = QLabel("Main Dashboard - Vigilis")
         title_label.setStyleSheet(HeaderStyle)
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title_label)
@@ -462,7 +462,7 @@ class MessageScreen(QWidget):
         
         # Title in its own layout to ensure it's centered in the available space
         title_container = QHBoxLayout()
-        header_label = QLabel("Contact Book")
+        header_label = QLabel("Messages")
         header_label.setStyleSheet(HeaderStyle)
         header_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title_container.addWidget(header_label)
@@ -864,8 +864,8 @@ class MainWindow(QMainWindow):
         self.setup_ui()
         
     def setup_ui(self):
-        self.setWindowTitle("Vigilis")
-        self.setGeometry(100, 100, 1000, 700)  # Reduced height from 800 to 700
+        self.setWindowTitle("Vigilis: Stay Protected against Fraud")
+        self.setGeometry(100, 100, 1000, 600)
         self.setStyleSheet(UIStyle)
         
         # Setup icon
@@ -1158,7 +1158,7 @@ class MainWindow(QMainWindow):
                     current_text += f"\n{prefix}: {content}"
                 spam = predict_call_spam(current_text[max(0, len(current_text)-700):])
                 print(spam)
-                if spam > 0.5 and not hasattr(self, '_spam_warning_shown'):
+                if spam > 0.8 and not hasattr(self, '_spam_warning_shown'):
                     cursor.insertHtml(f"<br><span style='color: red; font-weight: bold;'>POTENTIAL SCAM DETECTED</span>")
                     self._spam_warning_shown = True
                     QTimer.singleShot(100, lambda: self._show_spam_warning(spam))

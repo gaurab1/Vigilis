@@ -1,10 +1,9 @@
-# Audio Call Recorder
+# Vigilis
 
-A simple desktop application allowing audio calls, recording, transcribing and storing them for later use.
+A fraud-protected desktop application allowing users to stay secure during audio calls, text messages, and web browsing.
 
 ## Features
-- Send or Receive calls to/from your Twilio phone number
-- Realtime transcription of the call
+- Send or Receive calls to/from your Twilio phone number, with active transcription
 - Save recordings in WAV format, and transcripts in a .txt file
 - Chat with people in a secure manner!
 

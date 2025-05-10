@@ -5,25 +5,38 @@ import faiss
 import numpy as np
 import requests
 import time
+import random
+import matplotlib.pyplot as plt
 
 PHONE_TRANSCRIPT_DIR = "outputs/phone_calls"
 MESSAGE_DIR = "outputs/messages"
 BROWSER_DIR = "C:/Users/gaura/Downloads/Scraper/Output"
 
 def do_semantic_search(query, documents):
+    if not documents:
+        return None
+        
     model = SentenceTransformer('all-MiniLM-L6-v2')
     
     doc_embeddings = model.encode([doc['content'] for doc in documents])
     query_embedding = model.encode([query])[0]
     
     # Create FAISS index for efficient similarity search
-    index = faiss.IndexFlatL2(len(query_embedding))
-    index.add(np.array(doc_embeddings))
+    vector_dimension = len(query_embedding)
+    index = faiss.IndexFlatL2(vector_dimension)
+    
+    if len(doc_embeddings.shape) != 2:
+        print(f"Warning: Unexpected embedding shape: {doc_embeddings.shape}")
+        # Reshape if it's a single vector
+        if doc_embeddings.size == vector_dimension:
+            doc_embeddings = doc_embeddings.reshape(1, vector_dimension)
+    
+    index.add(doc_embeddings)
     
     # Find the most similar document
     distances, indices = index.search(np.array([query_embedding]), 1)
     
-    if indices[0][0] != -1:
+    if indices.size > 0 and indices[0][0] != -1:
         return documents[indices[0][0]]
     else:
         return None
@@ -36,8 +49,44 @@ def match_filter(text, amount, to):
     score += text.count(f"{amount:,}")
     score += text.count("{:,.2f}".format(amount))
     if amount == int(amount):
-        score += text.count(str(amount))
+        score += text.count(str(int(amount)))
     return score
+
+def get_testcases():
+    matches = []
+    with open('test_cases.txt', 'r') as f:
+        content = f.read()
+        lines = content.split("\n")
+        within_case = False
+        history = None
+        amount = None
+        description = None
+        for line in lines:
+            if "Amount: $" in line:
+                within_case = True
+                if history:
+                    matches.append({'amount': amount, 'description': description, 'content': '\n'.join(history)})
+                amount = line.split("Amount: $")[-1].strip()
+            elif "Description: " in line:
+                description = line.split("Description: ")[-1].strip()
+            elif "History" in line:
+                history = []
+                continue
+            else:
+                if "Speaker 1:" in line or "Speaker 2:" in line:
+                    history.append(line.strip())
+        if history:
+            matches.append({'amount': amount, 'description': description, 'content': '\n'.join(history)})
+
+    return matches
+
+def search_tests(amount, files):
+    possible_matches = []
+    for file in files:
+        count = match_filter(file, amount, 'ibgvrtbsrs')
+        if count > 0:
+            possible_matches.append({'type': 'test', 'count': count, 'content': file})
+    return possible_matches
 
 def search_transcripts(amount, to):
     possible_matches = {}
@@ -77,7 +126,7 @@ def search_messages(amount, to):
             highlight_message = ''
             for line in lines:
                 if amount in line:
-                    highlight_message = line
+                    highlight_message = line.replace("Input: ", "").replace("Output: ", "")
                     break
             if (to in filename) or (to.replace('+1', '') in filename):
                 count_score += 1
@@ -109,7 +158,6 @@ def search_browser(amount, to):
 def summarize_context(context, highlight):
     api_url = "http://localhost:11434/api/generate"
     
-    # Prepare the prompt similar to the OpenAI version
     # system_prompt = f"You are an expert summarizer, and can look for important information even in unorganized settings."
     user_prompt = f"You are given text from a scraped website that a user is about to make a purchase from, and you should understand whether the website is fraudulent or not, using crucial information present in the URL, title, and contents of the page. Think about the task in not more than 1-2 lines, and finally make a decision in a new line whether it involves fraudulent/normal transaction. The website contents are:\n {context[:3000]}"
     
@@ -124,14 +172,25 @@ def summarize_context(context, highlight):
     print("Sending request...")
     start = time.time()
     response = requests.post(api_url, json=payload)
-    response.raise_for_status()  # Raise exception for HTTP errors
+    response.raise_for_status()
     print(f"Received request... at {time.time() - start}")
-    # Parse the response
     result = response.json()
-        
-    # Extract the generated text
     generated_text = result.get("response", "").strip()
     return generated_text
+
+def find_context_test(amount, description, files):
+    amount = str(amount).replace(',', '')
+    possible_matches = search_tests(amount, files)
+    possible_matches = sorted(possible_matches, key=lambda x: x['count'], reverse=True)
+    if description:
+        description_results = do_semantic_search(description, possible_matches)
+        if description_results:
+            item = description_results
+        else:
+            item = possible_matches[0]
+    else:
+        item = possible_matches[0]
+    return item['content']
 
 def find_context(amount, to, description):
     amount = str(amount).replace(',', '')
@@ -154,5 +213,52 @@ def find_context(amount, to, description):
     else:
         return f"Found Context from <b>Phone Call</b> with <b>{item['number']}</b><br>Highlighted conversation: {item['highlight']}"
 
+def run_tests():
+    tests = get_testcases()
+    num_files = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 117]
+    percentage_with_description = []
+    percentage_without_description = []
+    for num in num_files:
+        print(num)
+        curr_tests = random.sample(tests, num)
+        files = [x['content'] for x in curr_tests]
+        correct = 0
+        for idx, test in enumerate(curr_tests):
+            amount = test['amount']
+            desc = test['description']
+            expected_content = test['content']
+            content = find_context_test(amount, desc, files)
+            if content == expected_content:
+                correct += 1
+        percentage_with_description.append(correct / len(curr_tests))
+
+        correct = 0
+        for idx, test in enumerate(curr_tests):
+            amount = test['amount']
+            desc = None
+            expected_content = test['content']
+            content = find_context_test(amount, desc, files)
+            if content == expected_content:
+                correct += 1
+        percentage_without_description.append(correct / len(curr_tests))
+
+    print(percentage_with_description)
+    print(percentage_without_description)
+
+    plt.plot(num_files, percentage_with_description, label='With Semantic Search')
+    plt.plot(num_files, percentage_without_description, label='Without Semantic Search')
+    plt.xlabel("Number of documents")
+    plt.ylabel("Correct Fraction")
+    plt.title("Accuracy of searching right context in documents")
+    plt.grid()
+    plt.legend()
+    plt.savefig("results.png")
+    plt.show()
+
 if __name__ == '__main__':
     print(find_context(4.19, '+12243916520', "Thanks for the snacks!"))
+    # run_tests()
+    
+    
+    
+    
